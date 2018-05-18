@@ -9,9 +9,9 @@ EXE     = certcheck
 OBJ     = bin/main.o
 
 $(EXE): mkdir $(OBJ)
-	$(CC) $(CFLAGS) -lssl -lcrypto -o $@ $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $(OBJ) -lssl -lcrypto
 bin/main.o: src/main.c
-	$(CC) $(CFLAGS) -c -lssl -lcrypto -o $@ $^
+	$(CC) $(CFLAGS) -c -o $@ $^ -lssl -lcrypto
 
 mkdir:
 	mkdir -p bin
