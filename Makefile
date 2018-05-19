@@ -13,6 +13,9 @@ $(EXE): mkdir $(OBJ)
 bin/main.o: src/main.c
 	$(CC) $(CFLAGS) -c -o $@ $^ -lssl -lcrypto
 
+debug: mkdir
+	$(CC) $(CFLAGS) -D DEBUG -o $(EXE) src/main.c -lssl -lcrypto
+
 mkdir:
 	mkdir -p bin
 

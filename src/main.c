@@ -25,6 +25,9 @@ static bool wildcard_match(const char *curr1, const char *curr2) {
             }
         if(match)
             if(rcurr2 != curr2)
+                // in this case, the suffix is matched but they may have
+                // different domain name (e.g. *.def.com vs f.com) or an ill-
+                // formed domain name (e.g. (nil).domain.com)
                 match = false;
             else
                 while(rcurr1 >= curr1)
@@ -33,17 +36,9 @@ static bool wildcard_match(const char *curr1, const char *curr2) {
                         match = false;
                         break;
                     }
-    } else {
-        char c1, c2;
-        // evaluate both side without short-circuit
-        while((bool)(c1 = *curr1++) & (bool)(c2 = *curr2++))
-            if(c1 != c2) {
-                match = false;
-                break;
-            }
-        if(c1 || c2)
-            match = false;
-    }
+    } else
+        // just compare the domain without any wildcard
+        match = !strcmp(curr1, curr2);
     return match;
 }
 
@@ -54,10 +49,10 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // initialise OpenSSL
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    // initialise OpenSSL, with respect to a specific version
+#if OPENSSL_VERSION_NUMBER < 0x10100000L // any versions prior to 1.1.0
     SSL_library_init();
-#else
+#else // 1.1.0
     OPENSSL_init_ssl(0, NULL);
 #endif
     SSL_load_error_strings();
@@ -66,7 +61,13 @@ int main(int argc, char *argv[]) {
     FILE *in = fopen(argv[1], "r"), *out = fopen("output.csv", "w");
 
     char cfpath[1024], dname[1024];
+#ifdef DEBUG
+    int count = 0;
+#endif
     while(fscanf(in, "%[^,]s", cfpath) != EOF) {
+#ifdef DEBUG
+        fprintf(stderr, "Line %d:\n", ++count);
+#endif
         // flush the unwritten data to file
         fflush(out);
 
@@ -82,6 +83,10 @@ int main(int argc, char *argv[]) {
         // consume the LF
         fgetc(in);
 
+#ifdef DEBUG
+        fprintf(stderr, "  %s, %s\n", cfpath, dname);
+#endif
+
         // load certificate
         BIO *cbio = BIO_new(BIO_s_file());
         if(!(BIO_read_filename(cbio, cfpath))) {
@@ -94,6 +99,10 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
         BIO_free_all(cbio);
+
+#ifdef DEBUG
+        fprintf(stderr, "    successfully loaded\n");
+#endif
 
         // check not before
         const ASN1_TIME *t;
@@ -111,12 +120,20 @@ int main(int argc, char *argv[]) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
+#ifdef DEBUG
+        fprintf(stderr, "        values: %d, %d\n", day, sec);
+#endif
+        // current time is earlier than the time specified
         if(day < 0 || sec < 0) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
             ASN1_TIME_free(ct);
             X509_free(cert);
             continue;
         }
+
+#ifdef DEBUG
+        fprintf(stderr, "    pass Not Before\n");
+#endif
 
         // check not after
         if(!(t = X509_get0_notAfter(cert))) {
@@ -128,11 +145,19 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
         ASN1_TIME_free(ct);
+#ifdef DEBUG
+        fprintf(stderr, "        values: %d, %d\n", day, sec);
+#endif
+        // current time is later than the time specified
         if(day > 0 || sec > 0) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
             X509_free(cert);
             continue;
         }
+
+#ifdef DEBUG
+        fprintf(stderr, "    pass Not After\n");
+#endif
 
         // check RSA key length
         EVP_PKEY *pkey;
@@ -145,8 +170,11 @@ int main(int argc, char *argv[]) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
+#ifdef DEBUG
+        fprintf(stderr, "        values: %d\n", RSA_size(rsa));
+#endif
         EVP_PKEY_free(pkey);
-        // 2048 bits is 512 bytes
+        // 2048 bits is 256 bytes
         if(RSA_size(rsa) < 256) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
             RSA_free(rsa);
@@ -155,13 +183,81 @@ int main(int argc, char *argv[]) {
         }
         RSA_free(rsa);
 
+#ifdef DEBUG
+        fprintf(stderr, "    pass RSA key length\n");
+#endif
+
+        // validate basic constraints
         BASIC_CONSTRAINTS *bc;
-        if(bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL)) {
-            ;
+        if(!(bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL))) {
+            ERR_print_errors_fp(stderr);
+            exit(EXIT_FAILURE);
+        }
+#ifdef DEBUG
+        fprintf(stderr, "        values: %d\n", bc->ca);
+#endif
+        if(bc->ca) {
+            fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
+            BASIC_CONSTRAINTS_free(bc);
+            X509_free(cert);
+            continue;
+        }
+        BASIC_CONSTRAINTS_free(bc);
+
+#ifdef DEBUG
+        fprintf(stderr, "    pass Basic Constraints\n");
+#endif
+
+        // validate extended key usage
+        int i = -1;
+        X509_EXTENSION *ex;
+        bool match = false;
+        while((i = X509_get_ext_by_NID(cert, NID_ext_key_usage, i)) >= 0) {
+            if(ex = X509_get_ext(cert, i)) {
+                BIO *bio = BIO_new(BIO_s_mem());
+                if (!X509V3_EXT_print(bio, ex, 0, 0)) {
+                    ERR_print_errors_fp(stderr);
+                    continue;
+                }
+                BIO_flush(bio);
+                BUF_MEM *bptr;
+                BIO_get_mem_ptr(bio, &bptr);
+
+                char *buff = malloc((bptr->length + 1) * sizeof(char));
+                memcpy(buff, bptr->data, bptr->length);
+                buff[bptr->length] = 0;
+#ifdef DEBUG
+                fprintf(stderr, "        values: %s\n", buff);
+                if(strstr(buff, "TLS Web Server Authentication"))
+#else
+                if(strstr(buff, "TLS Web Server Authentication")) {
+#endif
+                    match = true;
+#ifdef DEBUG
+                BIO_free_all(bio);
+                free(buff);
+#else
+                    BIO_free_all(bio);
+                    free(buff);
+                    break;
+                }
+                BIO_free_all(bio);
+                free(buff);
+#endif
+            }
+        }
+        if(!match) {
+            fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
+            X509_free(cert);
+            continue;
         }
 
-        // check Subject Alternative Names
-        bool match = false;
+#ifdef DEBUG
+        fprintf(stderr, "    pass Extended Key Usage\n");
+#endif
+
+        // check Subject Alternative Names (if applicable)
+        match = false;
         GENERAL_NAMES *gens;
         if(gens = X509_get_ext_d2i(
             cert, NID_subject_alt_name, NULL, NULL
@@ -170,23 +266,42 @@ int main(int argc, char *argv[]) {
                 GENERAL_NAME *gen = sk_GENERAL_NAME_value(gens, i);
                 if(gen->type != GEN_DNS)
                     continue;
+#ifdef DEBUG
                 char *cdname = gen->d.dNSName->data;
-                if(match = wildcard_match(dname, cdname))
+                fprintf(stderr, "        SAN values: %s\n", cdname);
+                match = match || wildcard_match(dname, cdname);
+#else
+                if(match = wildcard_match(dname, gen->d.dNSName->data))
                     break;
+#endif
             }
             GENERAL_NAMES_free(gens);
         }
-        // check Comman Name if SANs didn't match
+        // check Comman Name (if applicable) if SANs didn't match
+#ifdef DEBUG
+        if(true) {
+#else
         if(!match) {
+#endif
             X509_NAME *name = X509_get_subject_name(cert);
             int i = -1;
             while(
                 (i = X509_NAME_get_index_by_NID(name, NID_commonName, i)) >= 0
             )
+#ifdef DEBUG
+            {
+                char *cdname = X509_NAME_ENTRY_get_data(
+                    X509_NAME_get_entry(name, i)
+                )->data;
+                fprintf(stderr, "        CN values: %s\n", cdname);
+                match = match || wildcard_match(dname, cdname);
+            }
+#else
                 if(match = wildcard_match(dname, X509_NAME_ENTRY_get_data(
                     X509_NAME_get_entry(name, i)
                 )->data))
                     break;
+#endif
         }
         // both unmatch, then invalid
         if(!match) {
@@ -195,8 +310,17 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+#ifdef DEBUG
+        fprintf(stderr, "    pass Domain Name check by SAN and CN\n");
+#endif
+
         // valid certificate
         fprintf(out, "%s,%s,%u\n", cfpath, dname, 1);
+
+#ifdef DEBUG
+        fprintf(stderr, "    pass all test\n");
+#endif
+
         X509_free(cert);
     }
 
