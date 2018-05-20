@@ -5,7 +5,6 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
-#include <openssl/opensslv.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
@@ -50,10 +49,19 @@ int main(int argc, char *argv[]) {
     }
 
     // initialise OpenSSL, with respect to a specific version
+#ifdef DEBUG
+    fprintf(stderr, "version is %lx\n", OPENSSL_VERSION_NUMBER);
+#endif
 #if OPENSSL_VERSION_NUMBER < 0x10100000L // any versions prior to 1.1.0
     SSL_library_init();
+#ifdef DEBUG
+    fprintf(stderr, "version prior to 1.1\n");
+#endif
 #else // 1.1.0
     OPENSSL_init_ssl(0, NULL);
+#ifdef DEBUG
+    fprintf(stderr, "version 1.1\n");
+#endif
 #endif
     SSL_load_error_strings();
 
@@ -106,7 +114,11 @@ int main(int argc, char *argv[]) {
 
         // check not before
         const ASN1_TIME *t;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L // any versions prior to 1.1.0
+        if(!(t = X509_get_notBefore(cert))) {
+#else // 1.1.0
         if(!(t = X509_get0_notBefore(cert))) {
+#endif
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
@@ -136,7 +148,11 @@ int main(int argc, char *argv[]) {
 #endif
 
         // check not after
+#if OPENSSL_VERSION_NUMBER < 0x10100000L // any versions prior to 1.1.0
+        if(!(t = X509_get_notAfter(cert))) {
+#else // 1.1.0
         if(!(t = X509_get0_notAfter(cert))) {
+#endif
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
