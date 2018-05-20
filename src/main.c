@@ -189,14 +189,17 @@ int main(int argc, char *argv[]) {
 
         // validate basic constraints
         BASIC_CONSTRAINTS *bc;
-        if(!(bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL))) {
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
+        bool match = false;
+        if(bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL))
 #ifdef DEBUG
-        fprintf(stderr, "        values: %d\n", bc->ca);
+        {
+            fprintf(stderr, "        values: %d\n", bc->ca);
 #endif
-        if(bc->ca) {
+            match = !bc->ca;
+#ifdef DEBUG
+        }
+#endif
+        if(!match) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
             BASIC_CONSTRAINTS_free(bc);
             X509_free(cert);
@@ -210,41 +213,23 @@ int main(int argc, char *argv[]) {
 
         // validate extended key usage
         int i = -1;
-        X509_EXTENSION *ex;
-        bool match = false;
-        while((i = X509_get_ext_by_NID(cert, NID_ext_key_usage, i)) >= 0) {
-            if(ex = X509_get_ext(cert, i)) {
-                BIO *bio = BIO_new(BIO_s_mem());
-                if (!X509V3_EXT_print(bio, ex, 0, 0)) {
-                    ERR_print_errors_fp(stderr);
-                    continue;
-                }
-                BIO_flush(bio);
-                BUF_MEM *bptr;
-                BIO_get_mem_ptr(bio, &bptr);
-
-                char *buff = malloc((bptr->length + 1) * sizeof(char));
-                memcpy(buff, bptr->data, bptr->length);
-                buff[bptr->length] = 0;
+        match = false;
+        STACK_OF(ASN1_OBJECT) *objs;
+        if(objs = X509_get_ext_d2i(cert, NID_ext_key_usage, NULL, NULL)) {
+            for(int i = 0; i < sk_ASN1_OBJECT_num(objs); ++i)
 #ifdef DEBUG
-                fprintf(stderr, "        values: %s\n", buff);
-                if(strstr(buff, "TLS Web Server Authentication"))
-#else
-                if(strstr(buff, "TLS Web Server Authentication")) {
-#endif
-                    match = true;
-#ifdef DEBUG
-                BIO_free_all(bio);
-                free(buff);
-#else
-                    BIO_free_all(bio);
-                    free(buff);
-                    break;
-                }
-                BIO_free_all(bio);
-                free(buff);
-#endif
+            {
+                int nid = OBJ_obj2nid(sk_ASN1_OBJECT_value(objs, i));
+                fprintf(stderr, "        value: %d\n", nid);
+                match = match || nid == NID_server_auth;
             }
+#else
+                if(match = OBJ_obj2nid(
+                    sk_ASN1_OBJECT_value(objs, i)
+                ) == NID_server_auth)
+                    break;
+#endif
+            sk_ASN1_OBJECT_pop_free(objs, ASN1_OBJECT_free);
         }
         if(!match) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
@@ -259,9 +244,7 @@ int main(int argc, char *argv[]) {
         // check Subject Alternative Names (if applicable)
         match = false;
         GENERAL_NAMES *gens;
-        if(gens = X509_get_ext_d2i(
-            cert, NID_subject_alt_name, NULL, NULL
-        )) {
+        if(gens = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL)) {
             for(int i = 0; i < sk_GENERAL_NAME_num(gens); ++i) {
                 GENERAL_NAME *gen = sk_GENERAL_NAME_value(gens, i);
                 if(gen->type != GEN_DNS)
