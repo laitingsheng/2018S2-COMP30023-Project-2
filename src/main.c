@@ -11,31 +11,14 @@
 #include <openssl/x509v3.h>
 
 
-static bool wildcard_match(const char *curr1, const char *curr2) {
+static bool wildcard_match(const char * restrict curr1,
+                           const char * restrict curr2) {
     bool match = true;
-    if(*curr2 == '*') {
-        // wildcard match, match from back
-        const char *rcurr1 = curr1 + strlen(curr1) - 1,
-                   *rcurr2 = curr2 + strlen(curr2) - 1;
-        while(rcurr2 > curr2 && rcurr1 > curr1)
-            if(*rcurr1-- != *rcurr2--) {
-                match = false;
-                break;
-            }
-        if(match)
-            if(rcurr2 != curr2)
-                // in this case, the suffix is matched but they may have
-                // different domain name (e.g. *.def.com vs f.com) or an ill-
-                // formed domain name (e.g. (nil).domain.com)
-                match = false;
-            else
-                while(rcurr1 >= curr1)
-                    if(*rcurr1-- == '.') {
-                        // not current level
-                        match = false;
-                        break;
-                    }
-    } else
+    if(*curr2 == '*')
+        // since the wildcard will only appears in the front by itself, then
+        // find the first . in each string, then compare the rest
+        match = !strcmp(strchr(curr1, '.'), strchr(curr2, '.'));
+    else
         // just compare the domain without any wildcard
         match = !strcmp(curr1, curr2);
     return match;
