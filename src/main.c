@@ -16,8 +16,11 @@ static bool wildcard_match(const char * restrict curr1,
     bool match = true;
     if(*curr2 == '*')
         // since the wildcard will only appears in the front by itself, then
-        // find the first . in each string, then compare the rest
-        match = !strcmp(strchr(curr1, '.'), strchr(curr2, '.'));
+        // find the first . in each string, then compare the rest, and avoid a
+        // ill-formed domain such as (nil).example.com matching with
+        // *.example.com
+        match = *curr1 != '.' &&
+                !strcmp(strchr(curr1, '.'), strchr(curr2, '.'));
     else
         // just compare the domain without any wildcard
         match = !strcmp(curr1, curr2);
