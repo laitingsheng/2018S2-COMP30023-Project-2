@@ -224,7 +224,6 @@ int main(int argc, char *argv[]) {
 #endif
 
         // validate extended key usage
-        int i = -1;
         match = false;
         STACK_OF(ASN1_OBJECT) *objs;
         if(objs = X509_get_ext_d2i(cert, NID_ext_key_usage, NULL, NULL)) {
