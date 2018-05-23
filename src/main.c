@@ -1,3 +1,10 @@
+/*
+ * The main part for execution
+ * Create by Tingsheng Lai (tingshengl, 781319)
+ * This project is not necessary to be splitted to multi-files since most of the
+ * part are about 20 LOC
+ */
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,7 +65,8 @@ int main(int argc, char *argv[]) {
 #ifdef DEBUG
     int count = 0;
 #endif
-    while(fscanf(in, "%[^,]s", cfpath) != EOF) {
+    // assume that the csv is well-formed, i.e. each line in %s,%s\n format
+    while(fscanf(in, "%[^,]s,", cfpath) != EOF) {
 #ifdef DEBUG
         fprintf(stderr, "Line %d:\n", ++count);
 #endif
@@ -69,7 +77,7 @@ int main(int argc, char *argv[]) {
         fgetc(in);
 
         // the input csv is in LF ending
-        if(fscanf(in, "%[^\n]s", dname) == EOF) {
+        if(fscanf(in, "%[^\n]s\n", dname) == EOF) {
             fprintf(stderr, "invalid syntax\n");
             exit(EXIT_FAILURE);
         }
@@ -108,6 +116,7 @@ int main(int argc, char *argv[]) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
+        // get current time
         ASN1_TIME *ct;
         if(!(ct = X509_time_adj(NULL, 0, NULL))) {
             ERR_print_errors_fp(stderr);
@@ -146,6 +155,7 @@ int main(int argc, char *argv[]) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
+        // free since it will not be used any more
         ASN1_TIME_free(ct);
 #ifdef DEBUG
         fprintf(stderr, "        values: %d, %d\n", day, sec);
