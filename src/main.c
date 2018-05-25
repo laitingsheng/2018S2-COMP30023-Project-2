@@ -2,7 +2,10 @@
  * The main part for execution
  * Create by Tingsheng Lai (tingshengl, 781319)
  * This project is not necessary to be splitted to multi-files since most of the
- * part are about 20 LOC
+ * part are about 10 to 20 LOCs.
+ * The memory occupied will be handled and freed when it is not needed any more,
+ * but a non-expected error will terminate the program without resource release
+ * since I decided to let the system handle these memory.
  */
 
 #include <stdbool.h>
@@ -27,7 +30,7 @@ static bool wildcard_match(const char * restrict curr1,
         // ill-formed domain such as (nil).example.com matching with
         // *.example.com
         match = *curr1 != '.' &&
-                !strcmp(strchr(curr1, '.'), strchr(curr2, '.'));
+                !strcmp(strchr(curr1, '.'), curr2 + 1);
     else
         // just compare the domain without any wildcard
         match = !strcmp(curr1, curr2);
@@ -70,7 +73,7 @@ int main(int argc, char *argv[]) {
 #ifdef DEBUG
         fprintf(stderr, "Line %d:\n", ++count);
 #endif
-        // flush the unwritten data to file
+        // flush the buffered data to file
         fflush(out);
 
         // consume the comma
@@ -116,14 +119,8 @@ int main(int argc, char *argv[]) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
-        // get current time
-        ASN1_TIME *ct;
-        if(!(ct = X509_time_adj(NULL, 0, NULL))) {
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
         int day, sec;
-        if(!ASN1_TIME_diff(&day, &sec, t, ct)) {
+        if(!ASN1_TIME_diff(&day, &sec, t, NULL)) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
@@ -133,7 +130,6 @@ int main(int argc, char *argv[]) {
         // current time is earlier than the time specified
         if(day < 0 || sec < 0) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
-            ASN1_TIME_free(ct);
             X509_free(cert);
             continue;
         }
@@ -151,12 +147,10 @@ int main(int argc, char *argv[]) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
-        if(!ASN1_TIME_diff(&day, &sec, t, ct)) {
+        if(!ASN1_TIME_diff(&day, &sec, t, NULL)) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
-        // free since it will not be used any more
-        ASN1_TIME_free(ct);
 #ifdef DEBUG
         fprintf(stderr, "        values: %d, %d\n", day, sec);
 #endif
@@ -200,24 +194,20 @@ int main(int argc, char *argv[]) {
 #endif
 
         // validate basic constraints
-        BASIC_CONSTRAINTS *bc;
+        BASIC_CONSTRAINTS *bc = NULL;
         bool match = false;
-        if(bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL))
+        if(bc = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL)) {
 #ifdef DEBUG
-        {
             fprintf(stderr, "        values: %d\n", bc->ca);
 #endif
             match = !bc->ca;
-#ifdef DEBUG
+            BASIC_CONSTRAINTS_free(bc);
         }
-#endif
         if(!match) {
             fprintf(out, "%s,%s,%d\n", cfpath, dname, 0);
-            BASIC_CONSTRAINTS_free(bc);
             X509_free(cert);
             continue;
         }
-        BASIC_CONSTRAINTS_free(bc);
 
 #ifdef DEBUG
         fprintf(stderr, "    pass Basic Constraints\n");
