@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <strings.h>
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -30,10 +32,10 @@ static bool wildcard_match(const char * restrict curr1,
         // ill-formed domain such as (nil).example.com matching with
         // *.example.com
         match = *curr1 != '.' &&
-                !strcmp(strchr(curr1, '.'), curr2 + 1);
+                !strcasecmp(strchr(curr1, '.'), curr2 + 1);
     else
         // just compare the domain without any wildcard
-        match = !strcmp(curr1, curr2);
+        match = !strcasecmp(curr1, curr2);
     return match;
 }
 
